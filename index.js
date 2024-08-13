@@ -24,6 +24,17 @@ app.get('/', (req, res) => {
   res.sendFile(__dirname + '/views/index.html')
 });
 
+app.get("/api/users", async (req, res) => {
+  const query = `SELECT * FROM users`;
+
+  try {
+    const dbres = await client.query(query);
+    res.json(dbres.rows)
+  } catch (err) {
+    console.error('Error reading records', err.stack);
+  }
+})
+
 app.post("/api/users", async (req, res) => {
   const user = req.body;
 
@@ -47,96 +58,95 @@ app.post("/api/users/:_id/exercises", async (req, res) => {
   const exercise = req.body;
   const authorId = req.params._id;
 
-  const text = 'INSERT INTO exercises(author_id, description, duration) VALUES($1, $2, $3) RETURNING *';
+  const text = 'INSERT INTO exercises(author_id, description, duration, date) VALUES($1, $2, $3, NOW()) RETURNING *';
   const values = [authorId, exercise.description, exercise.duration];
 
   let dbExercise;
-  
+
   try {
     const dbres = await client.query(text, values);
-    dbExercise = dbres.rows[0]
+    dbExercise = dbres.rows[0];
   } catch (err) {
     console.error('Error inserting record', err.stack);
+    return res.status(500).json({ error: 'Error inserting exercise' });
   }
 
-  const query = `SELECT * FROM users where _id='${authorId}'`;
+  const query = 'SELECT * FROM users WHERE _id = $1';
+  const queryValues = [authorId];
 
   try {
-    const dbres = await client.query(query);
+    const dbres = await client.query(query, queryValues);
     const user = dbres.rows[0];
 
-    console.log(user)
-
-    const date  = new Date(dbExercise.date);
-
     res.json({
+      _id: user._id,
       username: user.username,
+      date: new Date(dbExercise.date).toDateString(),
+      duration: Number(dbExercise.duration),
       description: dbExercise.description,
-      duration: dbExercise.duration,
-      date: date.toDateString(),
-      _id: authorId
-    })
+    });
   } catch (err) {
     console.error('Error reading records', err.stack);
+    res.status(500).json({ error: 'Error retrieving user' });
   }
-})
+});
 
-app.get("/api/users/:_id/logs", async (req, res)=>{
+
+app.get("/api/users/:_id/logs", async (req, res) => {
   const authorId = req.params._id;
-  const {from, to, limit} = req.query;
+  const { from, to, limit } = req.query;
 
-  let exercisesQuery;
+  let exercisesQuery = `SELECT * FROM exercises WHERE author_id = $1`;
+  let queryParams = [authorId];
 
-  exercisesQuery = `SELECT * FROM exercises where author_id='${authorId}'`
-
-  if (from && to){
-    exercisesQuery = `SELECT * FROM exercises where author_id='${authorId}' AND created_at BETWEEN ${from} AND ${to}`
+  if (from) {
+    exercisesQuery += ` AND created_at >= $2`;
+    queryParams.push(from);
   }
 
-  if (limit){
-    exercisesQuery = `SELECT * FROM exercises where author_id='${authorId}' LIMIT ${limit}`
+  if (to) {
+    exercisesQuery += ` AND created_at <= $3`;
+    queryParams.push(to);
   }
 
-  if (from && to && limit){
-    exercisesQuery = `SELECT * FROM exercises where author_id='${authorId}' AND created_at BETWEEN ${from} AND ${to} LIMIT ${limit}`
+  if (limit) {
+    exercisesQuery += ` LIMIT $4`;
+    queryParams.push(Number(limit));
   }
-  
 
   let exercises = [];
 
   try {
-    const dbres = await client.query(exercisesQuery);
+    const dbres = await client.query(exercisesQuery, queryParams);
 
-    dbres.rows.forEach((exercise)=>{
-      exercises.push({
-        description: exercise.description,
-        duration: exercise.duration,
-        date: new Date(exercise.date).toDateString()
-      })
-    })
-
+    exercises = dbres.rows.map((exercise) => ({
+      description: exercise.description,
+      duration: Number(exercise.duration),
+      date: new Date(exercise.date).toDateString(),
+    }));
   } catch (err) {
     console.error('Error reading records', err.stack);
+    return res.status(500).json({ error: 'Error retrieving exercises' });
   }
 
-  const userQuery = `SELECT * FROM users where _id='${authorId}'`;
+  const userQuery = `SELECT * FROM users WHERE _id = $1`;
 
   try {
-    const dbres = await client.query(userQuery);
+    const dbres = await client.query(userQuery, [authorId]);
     const user = dbres.rows[0];
 
     res.json({
       username: user.username,
       count: exercises.length,
       _id: authorId,
-      logs: exercises
-    })
-
+      log: exercises,
+    });
   } catch (err) {
     console.error('Error reading records', err.stack);
+    res.status(500).json({ error: 'Error retrieving user' });
   }
+});
 
-})
 
 
 const listener = app.listen(process.env.PORT || 3000, () => {
