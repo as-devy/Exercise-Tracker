@@ -55,28 +55,19 @@ app.post("/api/users", async (req, res) => {
 })
 
 app.post("/api/users/:_id/exercises", async (req, res) => {
-  const exercise = req.body;
+  const { description, duration, date } = req.body;
   const authorId = req.params._id;
 
-  const text = 'INSERT INTO exercises(author_id, description, duration, date) VALUES($1, $2, $3, NOW()) RETURNING *';
-  const values = [authorId, exercise.description, exercise.duration];
-
-  let dbExercise;
-
   try {
-    const dbres = await client.query(text, values);
-    dbExercise = dbres.rows[0];
-  } catch (err) {
-    console.error('Error inserting record', err.stack);
-    return res.status(500).json({ error: 'Error inserting exercise' });
-  }
+    const text = `INSERT INTO exercises (author_id, description, duration, date) 
+                  VALUES ($1, $2, $3, $4) RETURNING *`;
+    const values = [authorId, description, duration, date || new Date()];
+    const exerciseDBRes = await client.query(text, values);
+    const dbExercise = exerciseDBRes.rows[0];
 
-  const query = 'SELECT * FROM users WHERE _id = $1';
-  const queryValues = [authorId];
-
-  try {
-    const dbres = await client.query(query, queryValues);
-    const user = dbres.rows[0];
+    const query = 'SELECT * FROM users WHERE _id = $1';
+    const userDBRes = await client.query(query, [authorId]);
+    const user = userDBRes.rows[0];
 
     res.json({
       _id: user._id,
@@ -85,39 +76,36 @@ app.post("/api/users/:_id/exercises", async (req, res) => {
       duration: Number(dbExercise.duration),
       description: dbExercise.description,
     });
-  } catch (err) {
-    console.error('Error reading records', err.stack);
-    res.status(500).json({ error: 'Error retrieving user' });
+  } catch (error) {
+    console.log(error);
+    res.status(500).json({ error: 'Error retrieving user or inserting exercise' });
   }
 });
+
 
 
 app.get("/api/users/:_id/logs", async (req, res) => {
   const authorId = req.params._id;
   const { from, to, limit } = req.query;
 
-  let exercisesQuery = `SELECT * FROM exercises WHERE author_id = $1`;
-  let queryParams = [authorId];
+  let exercisesQuery = `SELECT * FROM exercises WHERE author_id='${authorId}'`;
 
   if (from) {
-    exercisesQuery += ` AND created_at >= $2`;
-    queryParams.push(from);
+    exercisesQuery += ` AND date >= '${from}'`;
   }
 
   if (to) {
-    exercisesQuery += ` AND created_at <= $3`;
-    queryParams.push(to);
+    exercisesQuery += ` AND date <= '${to}'`;
   }
 
   if (limit) {
-    exercisesQuery += ` LIMIT $4`;
-    queryParams.push(Number(limit));
+    exercisesQuery += ` LIMIT ${Number(limit)}`;
   }
 
   let exercises = [];
 
   try {
-    const dbres = await client.query(exercisesQuery, queryParams);
+    const dbres = await client.query(exercisesQuery);
 
     exercises = dbres.rows.map((exercise) => ({
       description: exercise.description,
